@@ -1,0 +1,30 @@
+# 构建产物
+dist/
+*.tgz
+
+# 依赖
+node_modules/
+
+# 环境配置
+*.env
+!config.env.example
+
+# 测试 & 日志
+coverage/
+*.log
+
+# 编辑器 & 工具
+.serena/
+.vscode/
+.idea/
+*.swp
+
+# 调试脚本
+debug-*.js
+
+# 开发文档 & PoC（不发布）
+docs/
+poc/
+
+# Claude Code
+.claude/

@@ -1,0 +1,51 @@
+{
+  "name": "claude-to-feishu",
+  "version": "0.1.0",
+  "description": "Bridge Claude Code Agent SDK to Feishu/Lark messaging — run Claude as a Feishu bot",
+  "keywords": ["claude", "feishu", "lark", "chatbot", "ai", "agent", "claude-code"],
+  "author": "gqpang2",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pgqcoding/claude-to-feishu.git"
+  },
+  "homepage": "https://github.com/pgqcoding/claude-to-feishu#readme",
+  "bugs": {
+    "url": "https://github.com/pgqcoding/claude-to-feishu/issues"
+  },
+  "type": "module",
+  "bin": {
+    "claude-to-feishu": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/daemon.js"
+    }
+  },
+  "files": ["dist/**/*.js", "config.env.example", "README.md", "LICENSE"],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "node dist/daemon.js",
+    "dev": "tsx src/daemon.ts",
+    "test": "vitest run",
+    "test:watch": "vitest watch",
+    "test:coverage": "vitest run --coverage",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.2.62",
+    "@larksuiteoapi/node-sdk": "^1.59.0",
+    "dotenv": "^17.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@vitest/coverage-v8": "^4.1.0",
+    "esbuild": "^0.27.4",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0"
+  }
+}
