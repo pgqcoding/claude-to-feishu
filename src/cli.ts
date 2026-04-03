@@ -92,6 +92,8 @@ async function startDaemon(): Promise<void> {
       detached: true,
       stdio: ['ignore', outFd, errFd],
       env: { ...process.env },
+      // windowsHide: true 防止 Windows 下弹出控制台窗口
+      windowsHide: true,
     },
   );
   child.unref();

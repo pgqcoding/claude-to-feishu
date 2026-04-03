@@ -22,7 +22,8 @@ import { InboundRateLimiter } from '../core/rate-limiter.js';
 export async function createDaemon(): Promise<void> {
   // H2: 检查 Claude CLI 可用性
   try {
-    execFileSync('claude', ['--version'], { encoding: 'utf8', timeout: 5000 });
+    // windowsHide: true 防止 Windows 下弹出 CLI 窗口
+    execFileSync('claude', ['--version'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
   } catch {
     throw new Error('Claude CLI 不可用，请确认已安装并在 PATH 中');
   }

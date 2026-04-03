@@ -61,8 +61,8 @@ export function isProcessAlive(pid: number): boolean {
 export function killProcess(pid: number): boolean {
   try {
     if (IS_WINDOWS) {
-      // 使用 execFileSync 避免 shell 注入
-      execFileSync('taskkill', ['/F', '/PID', String(pid)], { stdio: 'ignore' });
+      // 使用 execFileSync 避免 shell 注入；windowsHide: true 防止弹出 CLI 窗口
+      execFileSync('taskkill', ['/F', '/PID', String(pid)], { stdio: 'ignore', windowsHide: true });
     } else {
       process.kill(pid, 'SIGKILL');
     }
@@ -82,11 +82,11 @@ export function getDiskFreeMb(dir: string): number | null {
       if (!/^[A-Za-z]$/.test(driveLetter)) {
         return null;
       }
-      // 使用 execFileSync 传参数组，避免 shell 注入
+      // 使用 execFileSync 传参数组，避免 shell 注入；windowsHide: true 防止弹出 CLI 窗口
       const output = execFileSync(
         'powershell',
         ['-Command', `(Get-PSDrive ${driveLetter}).Free`],
-        { encoding: 'utf8', timeout: 5000 }
+        { encoding: 'utf8', timeout: 5000, windowsHide: true }
       ).trim();
       return Math.floor(parseInt(output, 10) / 1024 / 1024);
     } else {

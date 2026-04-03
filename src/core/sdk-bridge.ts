@@ -203,6 +203,9 @@ export class SdkBridge {
       timeoutId = setTimeout(() => controller.abort(), options.timeoutMs);
     }
 
+    // 收集 Claude CLI 进程的 stderr 输出，供错误诊断使用
+    const stderrChunks: string[] = [];
+
     try {
       const sdk = await this.getSdk();
       const queryOptions: Record<string, unknown> = {
@@ -211,6 +214,8 @@ export class SdkBridge {
           cwd: options.cwd,
           model: options.model ?? this.config.defaultModel,
           abortController: controller,
+          // 捕获 CLI 进程 stderr，exit code 1 等错误时有助于定位原因
+          stderr: (data: string) => { stderrChunks.push(data); },
           ...(options.sessionId ? { resume: options.sessionId } : {}),
           ...(options.canUseTool ? { canUseTool: options.canUseTool } : {}),
         },
@@ -219,20 +224,39 @@ export class SdkBridge {
       const generator = sdk.query(queryOptions);
       let fullText = '';
 
-      for await (const event of generator) {
-        if (controller.signal.aborted) break;
-        const text = this.extractText(event);
-        if (text) {
-          if (options.onChunk) {
-            try {
-              options.onChunk(text);
-            } catch (chunkErr: unknown) {
-              // onChunk 异常不应中断查询流，记录警告后继续
-              console.warn('[sdk-bridge] onChunk 回调异常（已忽略）:', chunkErr);
+      try {
+        for await (const event of generator) {
+          if (controller.signal.aborted) break;
+          const text = this.extractText(event);
+          if (text) {
+            if (options.onChunk) {
+              try {
+                options.onChunk(text);
+              } catch (chunkErr: unknown) {
+                // onChunk 异常不应中断查询流，记录警告后继续
+                console.warn('[sdk-bridge] onChunk 回调异常（已忽略）:', chunkErr);
+              }
             }
+            fullText += text;
           }
-          fullText += text;
         }
+      } catch (iterErr: unknown) {
+        // 增强错误信息：附加 CLI stderr 输出，便于排查 "process exited with code 1" 等问题
+        const stderr = stderrChunks.join('').trim();
+        const baseMsg = iterErr instanceof Error ? iterErr.message : String(iterErr);
+
+        // 根据错误特征给出针对性排查建议
+        let hint = '';
+        if (/exited with code 1/i.test(baseMsg)) {
+          if (options.sessionId) {
+            hint = '（可能原因：resume 的 sessionId 不存在或已过期，尝试 /new 创建新会话）';
+          } else {
+            hint = '（可能原因：Claude CLI 认证失效或工作目录不存在，请检查 `claude auth status`）';
+          }
+        }
+
+        const detail = stderr ? `\n[CLI stderr] ${stderr}` : '';
+        throw new Error(`${baseMsg}${hint}${detail}`);
       }
 
       return fullText;
