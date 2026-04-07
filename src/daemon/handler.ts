@@ -116,6 +116,17 @@ export function createMessageHandler(deps: HandlerDeps) {
           })
       : undefined;
 
+    /** 删除处理中 Reaction（成功或失败路径均调用） */
+    async function removeProcessingReaction(): Promise<void> {
+      if (reactionId) {
+        try {
+          await deps.sender.removeReaction(msg.messageId, reactionId);
+        } catch {
+          // 删除失败不影响主流程
+        }
+      }
+    }
+
     try {
       const text = await bridge.queryStream({
         prompt: parsed.text,
@@ -132,17 +143,58 @@ export function createMessageHandler(deps: HandlerDeps) {
         success: true,
         timestamp: Date.now(),
       });
-      // 删除处理中 Reaction
-      if (reactionId) {
-        try {
-          await deps.sender.removeReaction(msg.messageId, reactionId);
-        } catch {
-          // 删除失败不影响主流程
-        }
-      }
+      await removeProcessingReaction();
       await sendText(msg.chatId, text);
     } catch (err) {
-      // 异常路径记录失败，供 /retry 使用
+      const errMsg = err instanceof Error ? err.message : String(err);
+
+      // 检测 session 失效：exit code 1 且当前有 sessionId → 自动 fallback 到新会话
+      if (/exited with code 1/i.test(errMsg) && currentBinding.sessionId) {
+        try {
+          // 新会话创建时通过回调捕获 SDK 分配的 sessionId
+          let newSessionId: string | undefined;
+          const fallbackText = await bridge.queryStream({
+            prompt: parsed.text,
+            cwd: currentBinding.projectDir,
+            canUseTool,
+            // 不传 sessionId → SDK 创建新会话
+            onSessionCreated: (id) => { newSessionId = id; },
+          });
+
+          // fallback 成功：更新绑定并持久化
+          if (newSessionId) {
+            const newBinding = { ...currentBinding, sessionId: newSessionId, boundAt: Date.now() };
+            const state = await store.load();
+            await store.save({ ...state, currentBinding: newBinding });
+            logger.info(`session 失效自动 fallback：旧=${currentBinding.sessionId} 新=${newSessionId}`, { module: 'handler' });
+          }
+
+          retryStore.record({
+            prompt: parsed.text,
+            chatId: msg.chatId,
+            sessionId: newSessionId ?? currentBinding.sessionId,
+            projectDir: currentBinding.projectDir,
+            success: true,
+            timestamp: Date.now(),
+          });
+          await removeProcessingReaction();
+          // 先发提醒，再发 Claude 回复
+          await sendText(
+            msg.chatId,
+            `⚠️ 原会话已失效，已自动创建新会话（项目：${currentBinding.projectAlias}）。如需切换会话，可用 /sessions 查看。`
+          );
+          await sendText(msg.chatId, fallbackText);
+          return;
+        } catch (fallbackErr) {
+          // fallback 也失败，记录后走原有错误路径
+          logger.error(
+            `session fallback 失败: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`,
+            { module: 'handler' }
+          );
+        }
+      }
+
+      // 原有错误路径：记录失败，删除 Reaction，给用户提示
       retryStore.record({
         prompt: parsed.text,
         chatId: msg.chatId,
@@ -151,16 +203,8 @@ export function createMessageHandler(deps: HandlerDeps) {
         success: false,
         timestamp: Date.now(),
       });
-      // 删除处理中 Reaction
-      if (reactionId) {
-        try {
-          await deps.sender.removeReaction(msg.messageId, reactionId);
-        } catch {
-          // 删除失败不影响主流程
-        }
-      }
+      await removeProcessingReaction();
       // 区分 abort 类错误和其他异常，给用户友好提示
-      const errMsg = err instanceof Error ? err.message : String(err);
       if (/abort/i.test(errMsg)) {
         logger.info(`查询被中止: ${errMsg}`, { module: 'handler' });
         await sendText(msg.chatId, '查询已中止，可能原因：超时、会话被终止或 CLI 进程退出。可用 /retry 重试。');

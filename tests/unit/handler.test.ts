@@ -558,4 +558,112 @@ describe('createMessageHandler', () => {
     const callArgs = deps.bridge.queryStream.mock.calls[0][0];
     expect(callArgs.canUseTool).toBeUndefined();
   });
+
+  // --- session 失效自动 fallback ---
+
+  it('queryStream exit code 1 + 有 sessionId → 自动 fallback 创建新会话，通知用户', async () => {
+    deps.sessionManager.getCurrentBinding.mockResolvedValue({
+      sessionId: 'sess-old',
+      projectDir: '/work/proj',
+      projectAlias: 'myproject',
+      boundAt: Date.now(),
+    });
+    deps.store.load.mockResolvedValue({
+      version: 1,
+      currentBinding: { sessionId: 'sess-old', projectDir: '/work/proj', projectAlias: 'myproject', boundAt: 100 },
+      recentSessionIds: [],
+    });
+
+    // 首次调用失败（session 失效），第二次（fallback）通过 onSessionCreated 回调返回新 sessionId 并解析
+    deps.bridge.queryStream = vi.fn()
+      .mockImplementationOnce(() => Promise.reject(new Error('process exited with code 1')))
+      .mockImplementationOnce((opts: { onSessionCreated?: (id: string) => void }) => {
+        // 模拟 SDK 触发 onSessionCreated 回调
+        opts.onSessionCreated?.('sess-new');
+        return Promise.resolve('fallback 回复');
+      });
+
+    await handler({ ...msg, text: '用户消息' });
+
+    // 应调用两次 queryStream：首次（有 sessionId）+ fallback（无 sessionId）
+    expect(deps.bridge.queryStream).toHaveBeenCalledTimes(2);
+    expect(deps.bridge.queryStream.mock.calls[0][0].sessionId).toBe('sess-old');
+    expect(deps.bridge.queryStream.mock.calls[1][0].sessionId).toBeUndefined();
+
+    // 绑定应更新为新 sessionId
+    expect(deps.store.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        currentBinding: expect.objectContaining({ sessionId: 'sess-new' }),
+      })
+    );
+
+    // 用户应收到：⏳ 占位 + 提醒消息 + Claude 回复（3 条）
+    const texts = deps.sender.send.mock.calls.map((c: [string, { text: string }]) => c[1].text);
+    expect(texts.some((t: string) => t.includes('⚠️'))).toBe(true);
+    expect(texts.some((t: string) => t.includes('myproject'))).toBe(true);
+    expect(texts.some((t: string) => t.includes('fallback 回复'))).toBe(true);
+  });
+
+  it('queryStream exit code 1 + 有 sessionId → fallback 也失败，走原有错误路径', async () => {
+    deps.sessionManager.getCurrentBinding.mockResolvedValue({
+      sessionId: 'sess-old',
+      projectDir: '/work/proj',
+      projectAlias: 'proj',
+      boundAt: Date.now(),
+    });
+
+    deps.bridge.queryStream = vi.fn()
+      .mockRejectedValue(new Error('process exited with code 1'));
+
+    await handler({ ...msg, text: '用户消息' });
+
+    // queryStream 调用了两次（首次 + fallback）
+    expect(deps.bridge.queryStream).toHaveBeenCalledTimes(2);
+
+    // store.save 不应因 fallback 而被调用（绑定不更新）
+    expect(deps.store.save).not.toHaveBeenCalled();
+
+    // 用户应收到内部错误提示
+    const texts = deps.sender.send.mock.calls.map((c: [string, { text: string }]) => c[1].text);
+    expect(texts.some((t: string) => t.includes('内部错误'))).toBe(true);
+  });
+
+  it('queryStream exit code 1 + 无 sessionId → 不触发 fallback，走原有错误路径', async () => {
+    deps.sessionManager.getCurrentBinding.mockResolvedValue({
+      // sessionId 为空字符串，不触发 fallback
+      sessionId: '',
+      projectDir: '/work/proj',
+      projectAlias: 'proj',
+      boundAt: Date.now(),
+    });
+
+    deps.bridge.queryStream = vi.fn()
+      .mockRejectedValue(new Error('process exited with code 1'));
+
+    await handler({ ...msg, text: '用户消息' });
+
+    // 不触发 fallback，只调用一次
+    expect(deps.bridge.queryStream).toHaveBeenCalledTimes(1);
+    const texts = deps.sender.send.mock.calls.map((c: [string, { text: string }]) => c[1].text);
+    expect(texts.some((t: string) => t.includes('内部错误'))).toBe(true);
+  });
+
+  it('queryStream 非 exit code 1 错误 → 不触发 fallback，走原有错误路径', async () => {
+    deps.sessionManager.getCurrentBinding.mockResolvedValue({
+      sessionId: 'sess-1',
+      projectDir: '/work/proj',
+      projectAlias: 'proj',
+      boundAt: Date.now(),
+    });
+
+    deps.bridge.queryStream = vi.fn()
+      .mockRejectedValue(new Error('network timeout'));
+
+    await handler({ ...msg, text: '用户消息' });
+
+    // 非 exit code 1 错误，只调用一次，不触发 fallback
+    expect(deps.bridge.queryStream).toHaveBeenCalledTimes(1);
+    const texts = deps.sender.send.mock.calls.map((c: [string, { text: string }]) => c[1].text);
+    expect(texts.some((t: string) => t.includes('内部错误'))).toBe(true);
+  });
 });

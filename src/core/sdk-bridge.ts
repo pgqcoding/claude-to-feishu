@@ -16,6 +16,8 @@ export interface StreamQueryOptions {
   readonly canUseTool?: CanUseToolCallback;
   readonly abortController?: AbortController;
   readonly timeoutMs?: number;
+  /** 新会话创建时回调，sessionId 为 SDK 分配的会话 ID */
+  readonly onSessionCreated?: (sessionId: string) => void;
 }
 
 interface SdkQueryOptions {
@@ -54,6 +56,20 @@ interface SdkSessionRecord {
   readonly gitBranch?: string;
   readonly customTitle?: string;
   readonly firstPrompt?: string;
+}
+
+/** SDK system/init 事件：包含新建会话的 session_id */
+interface SdkSystemInitEvent {
+  readonly type: 'system';
+  readonly subtype: 'init';
+  readonly session_id: string;
+}
+
+/** 判断是否为 system/init 事件 */
+function isSdkSystemInitEvent(event: unknown): event is SdkSystemInitEvent {
+  if (typeof event !== 'object' || event === null) return false;
+  const e = event as Record<string, unknown>;
+  return e['type'] === 'system' && e['subtype'] === 'init' && typeof e['session_id'] === 'string';
 }
 
 /** 判断是否为 assistant 消息事件 */
@@ -105,6 +121,8 @@ interface InternalQueryOptions {
   readonly timeoutMs?: number;
   /** 调用方预先创建的 AbortController，由调用方负责检查 signal 状态 */
   readonly controller: AbortController;
+  /** 新会话创建时回调（仅无 sessionId 时才会触发），传递 SDK 分配的 session_id */
+  readonly onSessionCreated?: (sessionId: string) => void;
 }
 
 /** 可热更新的运行时参数（对应 HOT_RELOADABLE_FIELDS 中涉及 bridge 的字段） */
@@ -223,10 +241,29 @@ export class SdkBridge {
 
       const generator = sdk.query(queryOptions);
       let fullText = '';
+      // 标记：onSessionCreated 只触发一次（首个 system/init 事件）
+      let sessionCreatedFired = false;
 
       try {
         for await (const event of generator) {
           if (controller.signal.aborted) break;
+
+          // 新会话创建：从 system/init 事件提取 session_id，仅在未指定 sessionId 时回调
+          if (
+            !options.sessionId &&
+            !sessionCreatedFired &&
+            isSdkSystemInitEvent(event) &&
+            options.onSessionCreated
+          ) {
+            sessionCreatedFired = true;
+            try {
+              options.onSessionCreated(event.session_id);
+            } catch (cbErr: unknown) {
+              // 回调异常不应中断查询流
+              console.warn('[sdk-bridge] onSessionCreated 回调异常（已忽略）:', cbErr);
+            }
+          }
+
           const text = this.extractText(event);
           if (text) {
             if (options.onChunk) {
@@ -316,6 +353,7 @@ export class SdkBridge {
       canUseTool: options.canUseTool,
       timeoutMs: options.timeoutMs ?? this.config.queryTimeoutMs,
       controller,
+      onSessionCreated: options.onSessionCreated,
     });
   }
 
