@@ -81,29 +81,40 @@ async function startDaemon(): Promise<void> {
 
   const bootLog = path.join(LOG_DIR, 'daemon-boot.log');
   const bootErrLog = path.join(LOG_DIR, 'daemon-boot-err.log');
-  const outFd = fs.openSync(bootLog, 'a');
-  const errFd = fs.openSync(bootErrLog, 'a');
 
-  // 后台启动 daemon 进程，父进程退出后子进程继续运行
-  const child = spawn(
-    process.execPath,
-    ['--max-old-space-size=640', '--expose-gc', DAEMON_ENTRY],
-    {
+  const nodeArgs = ['--max-old-space-size=640', '--expose-gc', DAEMON_ENTRY];
+
+  if (process.platform === 'win32') {
+    // Windows: 用 wscript + VBS 启动，彻底避免控制台窗口
+    // detached:true 在 Windows 上会创建 CREATE_NEW_PROCESS_GROUP 但无 CREATE_NO_WINDOW，
+    // 导致 daemon 进程在首次 I/O 时闪现控制台窗口
+    const vbsContent = [
+      `Set shell = CreateObject("WScript.Shell")`,
+      `cmd = """${process.execPath}"" ${nodeArgs.map(a => `""${a}""`).join(' ')}"`,
+      `shell.Run cmd, 0, False`,
+    ].join('\r\n');
+    const vbsPath = path.join(LOG_DIR, 'start-daemon.vbs');
+    fs.writeFileSync(vbsPath, vbsContent);
+    spawn('wscript', [vbsPath], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  } else {
+    // Linux/macOS: 标准 detached 方式
+    const outFd = fs.openSync(bootLog, 'a');
+    const errFd = fs.openSync(bootErrLog, 'a');
+    const child = spawn(process.execPath, nodeArgs, {
       detached: true,
       stdio: ['ignore', outFd, errFd],
       env: { ...process.env },
-      // windowsHide: true 防止 Windows 下弹出控制台窗口
       windowsHide: true,
-    },
-  );
-  child.unref();
+    });
+    child.unref();
+    fs.closeSync(outFd);
+    fs.closeSync(errFd);
+  }
 
-  console.log(`[INFO] daemon 已启动 (PID: ${child.pid})`);
+  console.log('[INFO] daemon 启动中...');
 
   // 等待 PID 文件生成（最多 10 秒）
   const ok = await waitForPidFile(10);
-  fs.closeSync(outFd);
-  fs.closeSync(errFd);
 
   if (ok) {
     const content = JSON.parse(fs.readFileSync(PID_PATH, 'utf8'));
