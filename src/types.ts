@@ -135,7 +135,7 @@ export interface PermissionRequest {
 
 /** 工具授权结果 */
 export type PermissionResult =
-  | { readonly behavior: 'allow'; readonly updatedInput: Record<string, unknown> | null }
+  | { readonly behavior: 'allow'; readonly updatedInput?: Record<string, unknown> }
   | { readonly behavior: 'deny'; readonly message: string };
 
 /** 流式渲染状态 */

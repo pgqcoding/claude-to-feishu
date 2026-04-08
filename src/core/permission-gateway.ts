@@ -185,7 +185,7 @@ export class PermissionGateway {
   requestPermission(params: RequestPermissionParams): Promise<PermissionResult> {
     // 白名单检查：支持精确工具名和 Bash(npm *) 等参数模式
     if (this.permissionAllowList.some(p => matchesPattern(params.toolName, params.toolInput, p))) {
-      return Promise.resolve({ behavior: 'allow', updatedInput: null });
+      return Promise.resolve({ behavior: 'allow' });
     }
 
     // 去重检查：已处理过的工具调用不再发送授权卡片
@@ -195,7 +195,7 @@ export class PermissionGateway {
     if (record && record.sessionId === params.chatId) {
       // 已允许：同一对话中直接放行
       if (record.action === 'allowed') {
-        return Promise.resolve({ behavior: 'allow', updatedInput: null });
+        return Promise.resolve({ behavior: 'allow' });
       }
       // 已拒绝：同一对话中直接返回拒绝
       if (record.action === 'denied') {
@@ -320,7 +320,7 @@ export class PermissionGateway {
         sessionId: pending.request.chatId,
         timestamp: Date.now(),
       });
-      pending.resolve({ behavior: 'allow', updatedInput: null });
+      pending.resolve({ behavior: 'allow' });
     } else {
       // 记录拒绝，同一对话中不再发送相同授权卡片
       const dedupKey = this.getDedupKey(pending.request.toolName, pending.request.toolInput);
